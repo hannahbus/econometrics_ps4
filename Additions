@@ -1,0 +1,200 @@
+---
+title: "Problem Set 4"
+author: "Hannah Busshoff, Peter Heinemann"
+date: "6 Mai 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+## Part 1: Background
+#1
+Birth weight is used as the primary measure for a baby's health and welfare in economic research. Low birth weight is a direct target of health policy, due to the high correlation of LBW and costs (prenatal costs in hospitals and opportunity costs, such as: LBW infants are more likely as adults to have lower educational attainment, poorer self-reported health status, reduced employment and earnings). This study attempts to derive a more precise image of costs caused by LBW.
+
+#2
+Birth weight is correlated with high blood pressure, cerebral palsy, deafness, blindness, asthma, lung disease, IQ, test scores, behavioral problems and cognitive development.
+
+#3
+The correlation between health and LBW might not be causal but due to unobserved variables affecting both. Authors argue that genes could be a confounding variable.
+
+#4 
+The goal of the twin-based analysis is in fact to overcome this identification issue. Regressing health status, hospital charges, infant mortality upon weight, holds all observed and unobserved factors of the mother constant. Therefore, any differences in weight can be ascribed to environmental factors rather than genetic factors.
+
+#5
+The goal is to get an idea of the plausibility of the magnitudes of effects derived in the first part by exploiting smoking-status of the childbearing woman as a further "external" source of variation in birth weights. The authors estimate the effect of maternal smoking during pregnancy on infant health outcomes. Overstated effects are probably established by attributing the entire effect of maternal smoking on infant health to the effect through LBW.
+
+#6
+The treatment variable is maternal smoking during pregnancy. For observations, where this was absent, observed birth weight is the potential outcome for not being treated, while the potential outcome for being treated is not observed. Contrarily for ovservations where maternal smoking during pregnancy was present. Discussed health outcomes outcomes are: 
+
+\begin{enumerate}
+\item Gestation length 
+\item Premature birth 
+\item APGAR score 
+\item Ventilator incidence 
+\item Mortality 
+\end{enumerate}
+
+#7
+Observations that differ in maternal smoking probably also differ in other covariates such that there are not enough comparable observations, for which causal effects of maternal smoking can be reliably estimated or again a bias due to omission of a relevant variable.
+There might be unobserved variables driving the correlation between birth weight and costs. Thus policy implications derived from analysis focusing on maternal smoking might thus reduce LBW but miss improving infant health and costs.
+
+## Part 2: Empirics
+```{r warning=FALSE, message=FALSE}
+library(sandwich)
+library(lmtest)
+library(ggplot2)
+library(easyGgplot2)
+library(MatchIt)
+library(dplyr)
+```
+#1
+```{r}
+df = read.csv("ps4_birthweight.csv")
+df_original = read.csv("ps4_birthweight.csv")
+dfs = subset(df_original, df$mbsmoke == 1)
+dfns = subset(df_original, df$mbsmoke == 0)
+mdfs = lapply(dfs, mean) 
+mdfns = lapply(dfns, mean)
+comp = cbind(mdfs, mdfns)
+comp
+```
+
+Comparison shows. Differences in birth weights by smoking status are sizeable. 
+However, there  differences in other covariates - such as:
+(1) Age and education of parents 
+(2) Marital status 
+(3) Number of prenatal care visits and trimester of prenatal visits. 
+
+This observation corraborates initial argument of the paper: Cannot only compare average birth weights. 
+
+
+#2
+```{r}
+reg1 = lm(bweight ~ mbsmoke, data = df)
+coeftest(reg1, vcov=vcovHC(reg1, type = "HC0"))
+```
+Interpretation:
+On average birthweight of children whose mother smoked during pregnancy is 275 grams lower. This difference is highly statistically significant.
+
+#3
+```{r message=FALSE}
+ggplot2.histogram(data=df, xName='fedu',
+        groupName='mbsmoke', legendPosition="top",
+        alpha=0.5, binwidth = 1)
+
+ggplot2.histogram(data=df, xName = 'mage', groupName = 'mbsmoke', legendPosition="top",
+                  alpha=0.5, binwidth=1)
+```
+We clearly see that the common support assumption is not violated.
+
+#4
+```{r}
+reg2 = lm(bweight ~ mbsmoke + ., data = df)
+coeftest(reg2, vcov=vcovHC(reg2, type = "HC0"))
+```
+The coefficient on smoking status now is slightly smaller in absolut terms and still highly significant.
+
+#5
+```{r message=FALSE}
+df_match = matchit(mbsmoke ~ fedu + fage, data = df_original, method = "exact") %>% match.data()
+ggplot2.histogram(data = df_match, xName = 'fedu', groupName = 'mbsmoke', legendPosition="top",
+                  alpha=0.5, bindwidth=1)
+ggplot2.histogram(data = df_match, xName = 'fage', groupName = 'mbsmoke', legendPosition="top",
+                  alpha=0.5, bindwidth=1)
+```
+Distribution is slightly more balanced
+
+#6
+```{r}
+means_match = aggregate(df_match$bweight, list(df_match$mbsmoke), mean)
+means_match[2,2]-means_match[1,2]
+reg3 = lm(bweight ~ mbsmoke, data = df_match)
+coeftest(reg3, vcov=vcovHC(reg3, type = "HC0"))
+```
+
+#7
+
+```{r}
+prop = glm(df$mbsmoke ~ df$mmarried + df$mhisp + df$fhisp + df$foreign + df$alcohol +df$mage + df$medu + df$fage + df$fedu + df$nprenatal + df$nprenatal + df$prenatal, family=binomial(link = "logit"), data = df)
+```
+
+Check for plausability of fitted values 
+
+```{r}
+x =  predict(prop,type="response")
+```
+
+Add a new column to the data frame with the propensity score 
+
+```{r}
+df$propscore = x  
+```
+
+
+#8
+```{r}
+ggplot2.density(data = df, xName = 'propscore', groupName = 'mbsmoke')
+```
+
+Exclude observations with extreme propensity scores because there is effectively no observation in the counterfactual group indicating a violation of the \emph{common support-assumption}. 
+
+
+#9
+```{r}
+m.out = matchit(mbsmoke ~ mmarried + mhisp + fhisp + foreign + alcohol +
+                    mage + medu + fage + fedu + nprenatal + prenatal,
+                  data = df_original, method = "nearest")
+```
+
+#10
+```{r}
+df$ind = 1 
+df$Group = 10 
+for (i in 1:9) {
+df$Group[df$propscore <= (10 - i)/10] = (10 - i) 
+}
+
+clusters = aggregate(df$bweight, list(df$Group, df$mbsmoke ==1), mean)
+
+clusters[20,1] = 10 
+clusters[20,2] = FALSE
+clusters[20,3] = 0
+clusters$Treatment = NA
+clusters$Size = NA
+
+for (i in 1:10) { 
+clusters$Treatment[clusters$Group.1 == i] = clusters$x[clusters$Group.1 == i & clusters$Group.2 == TRUE] - clusters$x[clusters$Group.1 == i & clusters$Group.2 == FALSE] 
+}
+
+for (i in 1:10) {
+clusters$Size[clusters$Group.1 == i] = sum(df$ind[df$Group == i])
+}
+
+clusters$Weight = clusters$Treatment * clusters$Size 
+sum(clusters$Weight)/sum(clusters$Size)
+```
+
+#11
+```{r}
+#weighted mean
+ate_w = sum(df$mbsmoke*df$bweight)/sum(df$propscore) - sum((1-df$mbsmoke)*df$bweight)/sum(1-df$propscore)
+ate_w
+```
+
+#12
+```{r}
+df$weight = 0 
+for (i in 1:4642) {
+  if (df$mbsmoke[i] == 1) { 
+    df$weight[i] = 1/df$prop[i]
+  }
+  else { 
+    df$weight[i] = 1/(1 - df$prop[i])
+    }
+}
+regress1 = lm(df$bweight ~ df$mbsmoke, data = df, weights = df$weight)
+summary(regress1)
+```
+
+#13
+
+All in all, the findings are in line with the argumentation of the paper. The treatment effect somwhat decreases when we account for differences between the sample of treated and untreated. The smoking effect is the smallest when we try to mimic the experimental setup by applying propensity score matching. The effect is the highest when we compute the naive difference in mean. The effect is only a bit  lower when applying exact matching with fage and fedu. The effect decreases (relatively) by more when all control variables are included. 
