@@ -1,0 +1,164 @@
+---
+title: "ps4"
+author: "Hannah Busshoff, Peter Heinemann"
+date: "6 Mai 2018"
+output: html_document
+---
+## Part 1: Background
+#1
+Birth weight is used as the primary measure for a baby's health and welfare in economic research. Low birth weight is a direct target of health policy, due to the high correlation of LBW and costs. This study attempts to picture a more precise image of costs caused by LBW.
+
+#2
+Birth weight is correlated with high blood pressure, cerebral palsy, deafness, blindness, asthma, lung disease, IQ, test scores, behavioral problems and cognitive development.
+
+#3
+The correlation between health and LBW might not be causal but due to unobserved variables affecting both. 
+
+#4 
+The twin approach helps to control for all characteristics of the mother. In the case of identical twins it controls for all genetic factors. Controling for this, the approach attemps to estimate correlation between twin differences in birth weight and twin differences in hospital charges, measures of health at birth, infant mortality.
+
+#5
+The goal is to get an idea of the plausibility of the magnitudes of effects derived in the first part. They estimate the effect of maternal smoking during pregnancy on infant health outcomes. Probably overstated effects are established by attributing the entire effect of maternal smoking on infant health to the effect through LBW.
+
+#6
+The treatment variable is maternal smoking during pregnancy. For observations, where this was absent, observed birth weight is the potential outcome for not being treated, while the potential outcome for being treated is not observed. Contrarily for ovservations where maternal smoking during pregnancy was present.
+
+#7
+Potentially observations that differ in maternal smoking also differ in other covariates such that there are not enough comparable observations, for which causal effects of maternal smoking can be reliably estimated.
+There might be unobserved variables driving the correlation between birth weight and costs. Thus policy implications derived from analysis focusing on maternal smoking might thus reduce LBW but miss improving infant healtch and costs.
+
+## Part 2: Empirics
+```{r warning=FALSE, message=FALSE}
+rm(list = ls())
+getwd()
+library(sandwich)
+library(lmtest)
+library(ggplot2)
+library(easyGgplot2)
+library(MatchIt)
+library(MatchItSE)
+library(tidyverse)
+library(dplyr)
+library(zeligverse)
+```
+#1
+```{r}
+df = read.csv("ps4_birthweight.csv")
+df_original = read.csv("ps4_birthweight.csv")
+means = aggregate(df, list(df$mbsmoke), mean)
+means
+```
+Interpretation: 
+
+#2
+```{r}
+reg1 = lm(bweight ~ mbsmoke, data = df)
+coeftest(reg1, vcov=vcovHC(reg1, type = "HC0"))
+```
+Interpretation:
+On average birthweight of children whose mother smoked during pregnancy is 275 grams lower. This difference is highly statistically significant.
+
+#3
+```{r message=FALSE}
+ggplot2.histogram(data=df, xName='fedu',
+        groupName='mbsmoke', legendPosition="top",
+        alpha=0.5, binwidth = 1)
+
+ggplot2.histogram(data=df, xName = 'mage', groupName = 'mbsmoke', legendPosition="top",
+                  alpha=0.5, binwidth=1)
+```
+We clearly see that the common support assumption is not violated.
+
+#4
+```{r}
+reg2 = lm(bweight ~ mbsmoke + ., data = df)
+coeftest(reg2, vcov=vcovHC(reg2, type = "HC0"))
+```
+The coefficient on smoking status now is slightly smaller in absolut terms and still highly significant.
+
+#5
+```{r message=FALSE}
+df_match = matchit(mbsmoke ~ fedu + fage, data = df_original, method = "exact") %>% match.data()
+ggplot2.histogram(data = df_match, xName = 'fedu', groupName = 'mbsmoke', legendPosition="top",
+                  alpha=0.5, bindwidth=1)
+ggplot2.histogram(data = df_match, xName = 'fage', groupName = 'mbsmoke', legendPosition="top",
+                  alpha=0.5, bindwidth=1)
+```
+Distribution is slightly more balanced
+
+#6
+```{r}
+means_match = aggregate(df_match$bweight, list(df_match$mbsmoke), mean)
+means_match[2,2]-means_match[1,2]
+reg3 = lm(bweight ~ mbsmoke, data = df_match)
+coeftest(reg3, vcov=vcovHC(reg3, type = "HC0"))
+att(matchit(mbsmoke ~ fedu + fage, data = df, method = "exact"), df_original$bweight)
+```
+
+#7
+```{r}
+df$propscore = glm(mbsmoke ~.,data = df_original, family = "binomial") %>%
+  predict(,type="response")
+glm(mbsmoke ~., data = df_original, family = "binomial") %>% summary()
+```
+Interpretation:...
+
+#8
+```{r}
+ggplot2.density(data = df, xName = 'propscore', groupName = 'mbsmoke')
+```
+Why exclude observations with extreme propscores?
+
+#9
+```{r}
+m.out = matchit(mbsmoke ~ mmarried + mhisp + fhisp + foreign + alcohol +
+                    mage + medu + fage + fedu + nprenatal + prenatal,
+                  data = df_original, method = "nearest")
+att(m.out, df_original$bweight)
+```
+
+#10
+```{r}
+df_propmatch = match.data(m.out)
+df_propmatch = df_propmatch[order(df_propmatch$distance),]
+df = df[order(df$propscore),]
+#create blocks
+df$block = 0
+for (i in 1:10) {
+  df$block[df$propscore > ((i-1)/(10)) & df$propscore <= (i/10)] = i
+}
+#avereage treatment effect for each block
+df$treat_block = 0
+for (i in unique(df$block)) {
+  df$treat_block[df$block == i] =
+  (sum(df$bweight[df$block == i & df$mbsmoke == 1])/length(df$bweight[df$block == i & df$mbsmoke == 1]) -     sum(df$bweight[df$block == i & df$mbsmoke == 0])/length(df$bweight[df$block == i & df$mbsmoke == 0]))
+}
+#overall treatment effect
+ate = 0
+for (i in unique(df$treat_block[df$block < 10])) {
+  ate = ate + i*length(df$treat_block[df$treat_block == i])/
+    length(df$treat_block)
+}
+ate
+```
+
+#11
+```{r}
+#weighted mean
+ate_w = sum(df$mbsmoke*df$bweight)/sum(df$propscore) - sum((1-df$mbsmoke)*df$bweight)/sum(1-df$propscore)
+ate_w
+```
+
+#12
+```{r}
+#create weights
+df$regweight = 0
+df$regweight = ifelse(df$mbsmoke == 1, 1/df$propscore, 1/(1-df$propscore))
+reg4 = lm(bweight ~ mbsmoke + mmarried + mhisp + fhisp + foreign + alcohol + medu +
+            mage + fage + fedu + nprenatal + prenatal, data = df, weights = regweight)
+summary(reg4)
+coeftest(reg4, vcov=vcovHC(reg4, type = "HC0"))
+```
+
+#13
+summary........
